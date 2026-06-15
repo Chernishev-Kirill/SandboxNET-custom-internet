@@ -1,0 +1,163 @@
+<address = "index">
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>SandboxNET</title>
+    <style>
+        * { box-sizing: border-box; user-select: none; }
+        body { background: #0000aa; color: #ffffff; font-family: 'Courier New', monospace; margin: 0; padding: 0; font-size: 14px; }
+        .title-bar { background: #ffffff; color: #0000aa; padding: 4px 8px; font-weight: bold; text-align: center; border-bottom: 2px solid #ffffff; }
+        .menu-bar { background: #0000aa; padding: 6px 10px; border-bottom: 2px solid #ffffff; display: flex; gap: 20px; }
+        .menu-item { color: #ffffff; cursor: pointer; font-weight: bold; padding: 2px 6px; }
+        .menu-item:hover { background: #ffffff; color: #0000aa; }
+        .action-panel { background: #0000aa; padding: 8px 12px; border-bottom: 2px solid #ffffff; display: none; align-items: center; gap: 10px; }
+        .action-panel input[type="text"] { background: #0000aa; color: #ffffff; border: 1px solid #ffffff; padding: 3px 6px; font-family: inherit; width: 180px; outline: none; }
+        .action-panel input[type="file"] { display: none; }
+        .file-label { border: 1px dashed #ffffff; padding: 3px 6px; cursor: pointer; font-size: 12px; }
+        .btn-win { background: #ffffff; color: #0000aa; border: none; padding: 3px 10px; font-family: inherit; font-weight: bold; cursor: pointer; }
+        .path-bar { padding: 6px 12px; background: #0000aa; color: #ffff00; border-bottom: 1px solid #ffffff; }
+        .file-system { padding: 10px; min-height: 200px; }
+        .list-item { padding: 4px 8px; cursor: pointer; display: block; width: 100%; text-align: left; }
+        .list-item.dir { color: #00ffff; font-weight: bold; }
+        .list-item.file { color: #ffffff; }
+        .list-item.focused { background: #ffffff; color: #0000aa !important; }
+        .mobile-pad { display: grid; grid-template-columns: repeat(3, 45px); grid-template-rows: repeat(2, 40px); gap: 5px; position: fixed; bottom: 15px; right: 15px; background: rgba(0,0,170,0.9); border: 2px solid #ffffff; padding: 4px; border-radius: 4px; }
+        .pad-btn { background: #ffffff; color: #0000aa; border: none; font-weight: bold; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 14px; }
+        .pad-btn:active { background: #00ffff; }
+        .p-up { grid-column: 2; }
+        .p-left { grid-column: 1; grid-row: 2; }
+        .p-down { grid-column: 2; grid-row: 2; }
+        .p-enter { grid-column: 3; grid-row: 2; background: #ffff00; color: #000; }
+        @media (min-width: 600px) { .mobile-pad { display: none; } }
+    </style>
+</head>
+<body>
+    <div class="title-bar">SandboxNET - by Чернышев Кирилл</div>
+    <div class="menu-bar">
+        <div class="menu-item" onclick="togglePanel('load-panel')">LOAD</div>
+        <div class="menu-item" onclick="togglePanel('folder-panel')">CREATE FOLDER</div>
+    </div>
+    <div id="folder-panel" class="action-panel">
+        <span>Folder Name:</span>
+        <input type="text" id="folder-name-input" placeholder="NEW_DIR" onkeydown="if(event.key==='Enter') createFolder()">
+        <button class="btn-win" onclick="createFolder()">OK</button>
+    </div>
+    <div id="load-panel" class="action-panel">
+        <form id="upload-form" method="POST" action="/upload" enctype="multipart/form-data" style="display:flex; align-items:center; gap:10px; margin:0;">
+            <span>Select HTML:</span>
+            <label class="file-label" for="file-file">Choose File...</label>
+            <input type="file" id="file-file" name="update" accept=".html" onchange="document.querySelector('.file-label').innerText=this.files[0].name">
+            <input type="hidden" id="upload-current-path" name="current_dir" value="/">
+            <button type="submit" class="btn-win">Load</button>
+        </form>
+    </div>
+    <div class="path-bar">Path: <span id="current-path-text">/</span></div>
+    <div id="file-list-container" class="file-system"></div>
+    <div class="mobile-pad">
+        <button class="pad-btn p-up" onclick="navigateList(-1)">▲</button>
+        <button class="pad-btn p-left" onclick="navigateList('BACK')">◀</button>
+        <button class="pad-btn p-down" onclick="navigateList(1)">▼</button>
+        <button class="pad-btn p-enter" onclick="pressEnter()">↵</button>
+    </div>
+    <script>
+        setInterval(() => { fetch('/heartbeat').catch(() => {}); }, 2000);
+
+        let currentDirectory = "/";
+        let itemsData = [];
+        let focusedIndex = 0;
+
+        function togglePanel(id) {
+            const panel = document.getElementById(id);
+            const isVisible = panel.style.display === 'flex';
+            document.querySelectorAll('.action-panel').forEach(p => p.style.display = 'none');
+            panel.style.display = isVisible ? 'none' : 'flex';
+            if (!isVisible && id === 'folder-panel') document.getElementById('folder-name-input').focus();
+        }
+
+        function renderList() {
+            const container = document.getElementById('file-list-container');
+            container.innerHTML = '';
+            if (itemsData.length === 0) {
+                container.innerHTML = '<div style="color:#777; font-style:italic; padding:4px 8px;">(Directory is empty)</div>';
+                return;
+            }
+            itemsData.forEach((item, index) => {
+                const div = document.createElement('div');
+                div.className = `list-item ${item.type} ${index === focusedIndex ? 'focused' : ''}`;
+                if (item.name === "...") div.innerText = "[ Parent Directory ]";
+                else if (item.type === "dir") div.innerText = "📁 " + item.name;
+                else div.innerText = "📄 " + item.name;
+                div.onclick = () => { focusedIndex = index; renderList(); pressEnter(); };
+                container.appendChild(div);
+            });
+        }
+
+        function loadDirectory(path) {
+            currentDirectory = path;
+            document.getElementById('current-path-text').innerText = path;
+            document.getElementById('upload-current-path').value = path;
+            fetch('/list-dir?path=' + encodeURIComponent(path))
+            .then(res => res.json())
+            .then(data => {
+                itemsData = [];
+                if (path !== "/") itemsData.push({ name: "...", type: "dir", path: "UP" });
+                itemsData = itemsData.concat(data);
+                focusedIndex = 0;
+                renderList();
+            });
+        }
+
+        function createFolder() {
+            const input = document.getElementById('folder-name-input');
+            const name = input.value.trim().toUpperCase();
+            if (!name) return;
+            fetch('/create-dir', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: `path=${encodeURIComponent(currentDirectory)}&name=${encodeURIComponent(name)}`
+            }).then(() => { input.value = ''; togglePanel('folder-panel'); loadDirectory(currentDirectory); });
+        }
+
+        function navigateList(direction) {
+            if (itemsData.length === 0) return;
+            if (direction === 'BACK') {
+                const upItem = itemsData.find(i => i.name === "...");
+                if (upItem) { focusedIndex = itemsData.indexOf(upItem); pressEnter(); }
+                return;
+            }
+            focusedIndex += direction;
+            if (focusedIndex < 0) focusedIndex = itemsData.length - 1;
+            if (focusedIndex >= itemsData.length) focusedIndex = 0;
+            renderList();
+        }
+
+        function pressEnter() {
+            if (itemsData.length === 0) return;
+            const activeItem = itemsData[focusedIndex];
+            if (activeItem.name === "...") {
+                let steps = currentDirectory.split('/');
+                steps.pop(); steps.pop();
+                let parentPath = steps.join('/') + '/';
+                if (parentPath === "") parentPath = "/";
+                loadDirectory(parentPath);
+            } else if (activeItem.type === "dir") {
+                loadDirectory(currentDirectory + activeItem.name + "/");
+            } else if (activeItem.type === "file") {
+                window.location.href = window.location.origin + "/" + activeItem.name.replace('.html', '');
+            }
+        }
+
+        document.addEventListener('keydown', e => {
+            if (document.activeElement.tagName === 'INPUT') return;
+            if (e.key === 'ArrowUp') { e.preventDefault(); navigateList(-1); }
+            if (e.key === 'ArrowDown') { e.preventDefault(); navigateList(1); }
+            if (e.key === 'ArrowLeft') { e.preventDefault(); navigateList('BACK'); }
+            if (e.key === 'Enter') { e.preventDefault(); pressEnter(); }
+        });
+
+        document.addEventListener('DOMContentLoaded', () => loadDirectory("/"));
+    </script>
+</body>
+</html>
